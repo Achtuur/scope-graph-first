@@ -9,3 +9,7 @@ I'm trying to replicate the example program in §2.2 of _Scopes as Types_
 ## Example
 
 ![Example program](images/example_program.png)
+
+## Output
+
+![Example output](images/example_output.png)

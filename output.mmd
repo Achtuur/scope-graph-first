@@ -1,0 +1,23 @@
+---
+title: output
+---
+flowchart LR
+    scope_0["NoData"]
+    scope_1["NoData"]
+    scope_2["x: num"]
+    scope_3["NoData"]
+    scope_4["f: (num -> num)"]
+    scope_5["NoData"]
+    scope_6["x: num"]
+    scope_7["x: num"]
+    scope_8["f: num"]
+    scope_9["x: num"]
+scope_0 ==>|"Parent"| scope_1
+scope_1 ==>|"Parent"| scope_3
+scope_1 ==>|"Parent"| scope_5
+scope_1 ==>|"Declaration"| scope_2
+scope_3 ==>|"Declaration"| scope_4
+scope_3 ==>|"Reference"| scope_8
+scope_3 ==>|"Reference"| scope_9
+scope_5 ==>|"Reference"| scope_7
+scope_5 ==>|"Declaration"| scope_6
