@@ -1,0 +1,8 @@
+[package]
+name = "scope-graph-first"
+description = "Implement the STLC with a scope graph"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+scopegraphs = { version = "0.3.2", features = ["dot"] }
