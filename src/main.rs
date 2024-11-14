@@ -57,7 +57,7 @@ impl Display for Data {
     }
 }
 
-const ALL_LABELS: [Label; 1] = [Label::Parent];
+const ALL_LABELS: [Label; 3] = [Label::Parent, Label::Declaration, Label::Reference];
 impl scopegraphs::Label for Label {
     fn iter() -> impl Iterator<Item = Self>
     where
@@ -135,6 +135,7 @@ impl Expression {
     }
 
     fn construct_scopes(&self, sg: &mut StlcGraph<'_>, prev_scope: &mut Scope) {
+        println!("prev_scope: {0:?}", prev_scope);
         match self {
             Expression::Literal(_) => (), // dont create scope for a number
             Expression::Var(name) => {
@@ -153,7 +154,7 @@ impl Expression {
             Expression::Func(param_name, param_type, body) => {
                 // add new scope for the function
                 let mut new_scope = sg.add_scope_default();
-                sg.add_edge(new_scope, Label::Parent, *prev_scope).unwrap();
+                sg.add_edge(*prev_scope, Label::Parent, new_scope).unwrap();
 
                 // add scope for parameter declaration
                 let param_data = Data::Variable(param_name.to_string(), param_type.clone());
@@ -172,7 +173,7 @@ impl Expression {
                 sg.add_decl(new_scope, Label::Declaration, data).unwrap();
 
                 // construct scopes for body and tail using new_scope
-                body.construct_scopes(sg, &mut new_scope);
+                body.construct_scopes(sg, prev_scope);
                 tail.construct_scopes(sg, &mut new_scope);
             },
         }
