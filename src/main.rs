@@ -2,7 +2,7 @@ use std::fmt::Display;
 
 use scopegraphs::{completeness::ImplicitClose, render::RenderSettings, Scope, ScopeGraph, Storage};
 
-#[derive(PartialEq, Eq, Hash, Debug, Clone)]
+#[derive(PartialEq, Eq, Hash, Debug, Clone, scopegraphs::Label)]
 enum Label {
     Parent,
     Declaration,
@@ -26,14 +26,14 @@ enum Data {
 #[derive(PartialEq, Eq, Hash, Clone)]
 enum Type {
     Num,
-    Decl(Box<Type>, Box<Type>),
+    Fun(Box<Type>, Box<Type>),
 }
 
 impl Display for Type {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Type::Num => write!(f, "num"),
-            Type::Decl(param_type, return_type) => write!(f, "({} -> {})", param_type, return_type),
+            Type::Fun(param_type, return_type) => write!(f, "({} -> {})", param_type, return_type),
         }
     }
 }
@@ -54,21 +54,6 @@ impl Display for Data {
             Data::NoData => write!(f, "NoData"),
             Data::Variable(name, ty) => write!(f, "{}: {}", name, ty),
         }
-    }
-}
-
-const ALL_LABELS: [Label; 3] = [Label::Parent, Label::Declaration, Label::Reference];
-impl scopegraphs::Label for Label {
-    fn iter() -> impl Iterator<Item = Self>
-    where
-        Self: Sized {
-        ALL_LABELS.into_iter()
-    }
-
-    fn iter_ref() -> impl Iterator<Item = &'static Self>
-    where
-        Self: Sized + 'static {
-        ALL_LABELS.iter()
     }
 }
 
@@ -106,15 +91,15 @@ enum Expression {
     Func(String, Type, Box<Expression>),
     Call(Box<Expression>, Box<Expression>),
     // Name, value, value_type tail
-    Decl(String, Box<Expression>, Box<Expression>),
+    Let(String, Box<Expression>, Box<Expression>),
 }
 
 impl Expression {
     /// returns an example program, equivalent to the one in the paper
     fn example_progam() -> Self {
-        Expression::Decl(
+        Expression::Let(
         "x".to_string(), Box::new(Expression::Literal(3)), // let x = 3 in
-        Box::new(Expression::Decl("f".to_string(), // let f = fun(x: num) { x } in
+        Box::new(Expression::Let("f".to_string(), // let f = fun(x: num) { x } in
             Box::new(Expression::Func("x".to_string(), Type::Num, Box::new(Expression::Var("x".to_string())))),
             Box::new(Expression::Call(Box::new(Expression::Var("f".to_string())), Box::new(Expression::Var("x".to_string()))))
         )))
@@ -128,9 +113,9 @@ impl Expression {
                 // todo!("query sg for type")
             },
             Expression::Add(expression, expression1) => Type::Num,
-            Expression::Func(_, param_type, expression) => Type::Decl(Box::new(param_type.clone()), Box::new(expression.expr_type())),
+            Expression::Func(_, param_type, expression) => Type::Fun(Box::new(param_type.clone()), Box::new(expression.expr_type())),
             Expression::Call(func, _) => todo!("query sg for type of func"),
-            Expression::Decl(_, body, _) => body.expr_type(),
+            Expression::Let(_, body, _) => body.expr_type(),
         }
     }
 
@@ -163,7 +148,7 @@ impl Expression {
                 // construct scopes for body using new scope
                 body.construct_scopes(sg, &mut new_scope);
             },
-            Expression::Decl(name, body, tail) => {
+            Expression::Let(name, body, tail) => {
                 // add new scope for the current "line"
                 let mut new_scope = sg.add_scope_default();
                 sg.add_edge(*prev_scope, Label::Parent, new_scope).unwrap();
