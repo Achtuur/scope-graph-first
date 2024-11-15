@@ -1,8 +1,12 @@
 use std::fmt::Display;
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 use scopegraphs::query_regex;
 use scopegraphs::{completeness::ImplicitClose, label_order, render::RenderSettings, Scope, ScopeGraph, Storage};
 use scopegraphs::resolve::Resolve;
+
+
+static mut SCOPE_NUM: AtomicUsize = AtomicUsize::new(0);
 
 #[derive(PartialEq, Eq, Hash, Debug, Clone, scopegraphs::Label, Copy)]
 enum Label {
@@ -22,6 +26,7 @@ enum Relation {
 enum Data {
     #[default]
     NoData,
+    ScopeNum(usize),
     Variable(String, Type),
 }
 
@@ -61,6 +66,7 @@ impl Display for Data {
         match self {
             Data::NoData => write!(f, "NoData"),
             Data::Variable(name, ty) => write!(f, "{}: {}", name, ty),
+            Data::ScopeNum(num) => write!(f, "{}", num),
         }
     }
 }
@@ -127,20 +133,22 @@ impl Expression {
     /*
         let x = 3 in
         let y = x in
-        let f = fun(x: num) { x } in
+        let f = fun(x: num) { let z = x in z } in
         f y
      */
     /// returns an example program, equivalent to the one in the paper
     fn example_progam() -> Self {
         Expression::let_expr("x", Expression::Literal(3),
         Expression::let_expr("y", Expression::Var("x".to_string()),
-        Expression::let_expr("f", Expression::func("x", Type::Num, Expression::var("x")),
+        Expression::let_expr("f", Expression::func("x", Type::Num,
+            Expression::let_expr("z", Expression::var("x"), Expression::var("z"))),
         Expression::call(Expression::var("f"), Expression::var("y"))
         )))
     }
 
 
-    fn expr_type(&self, sg: &StlcGraph<'_>, prev_scope: Scope) -> Type {
+    // making this unsafe since i really quickly want a global counter, ill make it nice later i promise
+    unsafe fn expr_type(&self, sg: &StlcGraph<'_>, prev_scope: Scope) -> Type {
         // I think we never wanna change the label order and wellformedness, so lets define that here
         let base_query = sg.query()
         .with_path_wellformedness(query_regex!(Label: Parent*Declaration))
@@ -148,15 +156,12 @@ impl Expression {
         match self {
             Expression::Literal(_) => Type::Num,
             Expression::Var(name) => {
-                println!("name: {0:?}", name);
                 // query the scopegraph for the name of this thing and return the type
                 let var_query = base_query
                 .with_data_wellformedness(|data: &Data| -> bool {
                     matches!(data, Data::Variable(d_name, _) if d_name == name)
                 })
                 .resolve(prev_scope);
-
-                println!("var_query: {0:?}", var_query);
 
                 match var_query.into_iter().nth(0).expect("Variable not found").data() {
                     Data::Variable(_, ty) => ty.clone(),
@@ -175,7 +180,7 @@ impl Expression {
             },
             Expression::Func(param_name, param_type, body) => {
                 // add new scope for the function
-                let new_scope = sg.add_scope_default();
+                let new_scope = sg.add_scope(Data::ScopeNum(SCOPE_NUM.fetch_add(1, Ordering::Relaxed)));
                 sg.add_edge(new_scope, Label::Parent, prev_scope).unwrap();
 
                 // add scope for parameter declaration
@@ -183,7 +188,7 @@ impl Expression {
                 sg.add_decl(new_scope, Label::Declaration, param_data).unwrap();
 
                 // construct scopes for body using new scope
-                let body_type = body.expr_type(sg, prev_scope);
+                let body_type = body.expr_type(sg, new_scope);
                 Type::fun(param_type.clone(), body_type)
             },
             Expression::Call(func, param) => {
@@ -201,9 +206,9 @@ impl Expression {
                 *t2
             },
             Expression::Let(name, body, tail) => {
-                println!("self: {0:?}", self);
                 // add new scope for the current "line"
-                let new_scope = sg.add_scope_default();
+                let new_scope = sg.add_scope(Data::ScopeNum(SCOPE_NUM.fetch_add(1, Ordering::Relaxed)));
+                // let new_scope = sg.add_scope_default();
                 sg.add_edge(new_scope, Label::Parent, prev_scope).unwrap();
 
                 // add scope for var declaration
@@ -211,7 +216,7 @@ impl Expression {
                 sg.add_decl(new_scope, Label::Declaration, data).unwrap();
 
                 // construct scopes for body and tail using new_scope
-                tail.expr_type(sg, prev_scope)
+                tail.expr_type(sg, new_scope)
             },
         }
     }
@@ -224,8 +229,11 @@ type StlcGraph<'s> = ScopeGraph<'s, Label, Data, ImplicitClose<Label>>;
 fn main() {
     let storage = Storage::new();
     let sg = StlcGraph::new(&storage, ImplicitClose::default());
-    let s0 = sg.add_scope_default();
-    Expression::example_progam().expr_type(&sg, s0);
+    // let s0 = sg.add_scope_default();
+    unsafe {
+        let s0 = sg.add_scope(Data::ScopeNum(SCOPE_NUM.fetch_add(1, Ordering::Relaxed)));
+        Expression::example_progam().expr_type(&sg, s0)
+    };
 
     sg.render_to("output.mmd", RenderSettings::default()).unwrap();
 }
