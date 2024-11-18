@@ -6,7 +6,7 @@ use scopegraphs::{completeness::ImplicitClose, label_order, render::RenderSettin
 use scopegraphs::resolve::Resolve;
 
 
-static mut SCOPE_NUM: AtomicUsize = AtomicUsize::new(0);
+static SCOPE_NUM: AtomicUsize = AtomicUsize::new(0);
 
 #[derive(PartialEq, Eq, Hash, Debug, Clone, scopegraphs::Label, Copy)]
 enum Label {
@@ -30,9 +30,19 @@ enum Data {
     Variable(String, Type),
 }
 
+impl Data {
+    pub fn name(&self) -> Option<&str> {
+        match self {
+            Self::Variable(name, _) => Some(name),
+            _ => None,
+        }
+    }
+}
+
 #[derive(Hash, Clone, Debug, PartialEq, Eq)]
 enum Type {
     Num,
+    Bool,
     Fun(Box<Type>, Box<Type>),
 }
 
@@ -46,6 +56,7 @@ impl Display for Type {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Type::Num => write!(f, "num"),
+            Type::Bool => write!(f, "bool"),
             Type::Fun(param_type, return_type) => write!(f, "({} -> {})", param_type, return_type),
         }
     }
@@ -98,6 +109,7 @@ impl scopegraphs::render::RenderScopeData for Data {
 #[derive(Debug)]
 enum Expression {
     Literal(i32),
+    Boolean(bool),
     Var(String),
     // arg1, arg2
     Add(Box<Expression>, Box<Expression>),
@@ -109,7 +121,6 @@ enum Expression {
 }
 
 impl Expression {
-
     fn var(name: impl ToString) -> Self {
         Expression::Var(name.to_string())
     }
@@ -131,38 +142,42 @@ impl Expression {
     }
 
     /*
+        let x = false in
         let x = 3 in
         let y = x in
-        let f = fun(x: num) { let z = x in z } in
+        let f = fun(x: num) { let z = x in true } in
         f y
      */
     /// returns an example program, equivalent to the one in the paper
     fn example_progam() -> Self {
+        Expression::let_expr("x", Expression::Boolean(false),
         Expression::let_expr("x", Expression::Literal(3),
         Expression::let_expr("y", Expression::Var("x".to_string()),
         Expression::let_expr("f", Expression::func("x", Type::Num,
-            Expression::let_expr("z", Expression::var("x"), Expression::var("z"))),
+            Expression::let_expr("z", Expression::var("x"), Expression::Boolean(false))), // x and z are unused
         Expression::call(Expression::var("f"), Expression::var("y"))
-        )))
+        ))))
     }
 
 
     // making this unsafe since i really quickly want a global counter, ill make it nice later i promise
-    unsafe fn expr_type(&self, sg: &StlcGraph<'_>, prev_scope: Scope) -> Type {
-        // I think we never wanna change the label order and wellformedness, so lets define that here
-        let base_query = sg.query()
-        .with_path_wellformedness(query_regex!(Label: Parent*Declaration))
-        .with_label_order(label_order!(Label: Parent < Declaration));
+    fn expr_type(&self, sg: &StlcGraph<'_>, prev_scope: Scope) -> Type {
         match self {
             Expression::Literal(_) => Type::Num,
+            Expression::Boolean(_) => Type::Bool,
             Expression::Var(name) => {
                 // query the scopegraph for the name of this thing and return the type
-                let var_query = base_query
+                let var_query = sg.query()
+                .with_path_wellformedness(query_regex!(Label: Parent*Declaration))
+                .with_label_order(label_order!(Label: Declaration < Parent))
                 .with_data_wellformedness(|data: &Data| -> bool {
                     matches!(data, Data::Variable(d_name, _) if d_name == name)
                 })
+                // .with_data_equivalence(|data1: &Data, data2: &Data| -> bool {
+                //     data1 == data2 // name and type should be the same
+                // })
                 .resolve(prev_scope);
-
+                // println!("var_query: {:#?}", var_query);
                 match var_query.into_iter().nth(0).expect("Variable not found").data() {
                     Data::Variable(_, ty) => ty.clone(),
                     _ => panic!("Variable found but no type")
@@ -229,11 +244,27 @@ type StlcGraph<'s> = ScopeGraph<'s, Label, Data, ImplicitClose<Label>>;
 fn main() {
     let storage = Storage::new();
     let sg = StlcGraph::new(&storage, ImplicitClose::default());
-    // let s0 = sg.add_scope_default();
-    unsafe {
-        let s0 = sg.add_scope(Data::ScopeNum(SCOPE_NUM.fetch_add(1, Ordering::Relaxed)));
-        Expression::example_progam().expr_type(&sg, s0)
-    };
+    let s0 = sg.add_scope(Data::ScopeNum(SCOPE_NUM.fetch_add(1, Ordering::Relaxed)));
+    Expression::example_progam().expr_type(&sg, s0);
 
     sg.render_to("output.mmd", RenderSettings::default()).unwrap();
+}
+
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_equivalence() {
+        let t1 = Data::Variable("x".to_string(), Type::Num);
+        let t2 = Data::Variable("x".to_string(), Type::Bool);
+        assert_ne!(t1, t2);
+
+        let t3 = Data::Variable("x".to_string(), Type::Num);
+        assert_eq!(t1, t3);
+
+        let t4 = Data::Variable("y".to_string(), Type::Num);
+        assert_ne!(t1, t4);
+    }
 }
