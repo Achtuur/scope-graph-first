@@ -12,29 +12,25 @@ static SCOPE_NUM: AtomicUsize = AtomicUsize::new(0);
 enum Label {
     Parent,
     Declaration,
-    Reference,
+    Record,
+    Extension,
 }
 
-
-// unused?
-#[derive(PartialEq, Eq, Hash)]
-enum Relation {
-    Declaration,
-}
 
 #[derive(Hash, Default, Clone, Debug, PartialEq, Eq)]
 enum Data {
     #[default]
     NoData,
     ScopeNum(usize),
+    RecScope(usize),
     Variable(String, Type),
 }
 
 impl Data {
-    pub fn name(&self) -> Option<&str> {
+    pub fn datatype(&self) -> Option<&Type> {
         match self {
-            Self::Variable(name, _) => Some(name),
-            _ => None,
+            Data::Variable(_, ty) => Some(ty),
+            _ => None
         }
     }
 }
@@ -44,6 +40,8 @@ enum Type {
     Num,
     Bool,
     Fun(Box<Type>, Box<Type>),
+    // number is the scope number
+    Record(usize),
 }
 
 impl Type {
@@ -57,7 +55,8 @@ impl Display for Type {
         match self {
             Type::Num => write!(f, "num"),
             Type::Bool => write!(f, "bool"),
-            Type::Fun(param_type, return_type) => write!(f, "({} -> {})", param_type, return_type),
+            Type::Fun(param_type, return_type) => write!(f, "({param_type} -> {return_type})"),
+            Type::Record(n) => write!(f, "REC({n})")
         }
     }
 }
@@ -67,7 +66,8 @@ impl Display for Label {
         match self {
             Label::Parent => write!(f, "Parent"),
             Label::Declaration => write!(f, "Declaration"),
-            Label::Reference => write!(f, "Reference"),
+            Label::Extension => write!(f, "Extension"),
+            Label::Record => write!(f, "Record"),
         }
     }
 }
@@ -76,8 +76,9 @@ impl Display for Data {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Data::NoData => write!(f, "NoData"),
-            Data::Variable(name, ty) => write!(f, "{}: {}", name, ty),
-            Data::ScopeNum(num) => write!(f, "{}", num),
+            Data::Variable(name, ty) => write!(f, "{name}: {ty}"),
+            Data::ScopeNum(num) => write!(f, "{num}"),
+            Data::RecScope(num) => write!(f, "Rec: {num}"),
         }
     }
 }
@@ -106,6 +107,9 @@ impl scopegraphs::render::RenderScopeData for Data {
     }
 }
 
+/// Expressions that can appear in the SLTC language
+///
+/// Extended with records
 #[derive(Debug)]
 enum Expression {
     Literal(i32),
@@ -114,10 +118,38 @@ enum Expression {
     // arg1, arg2
     Add(Box<Expression>, Box<Expression>),
     // parameter, parameter type, body
-    Func(String, Type, Box<Expression>),
-    Call(Box<Expression>, Box<Expression>),
-    // Name, value, value_type tail
-    Let(String, Box<Expression>, Box<Expression>),
+    Func {
+        param_name: String,
+        param_type: Type,
+        body: Box<Expression>,
+    },
+    Call {
+        func: Box<Expression>,
+        param: Box<Expression>,
+    },
+    Let {
+        name: String,
+        body: Box<Expression>,
+        tail: Box<Expression>,
+    },
+    Record(Vec<(String, Expression)>),
+
+    RecordAccess {
+        record: Box<Expression>,
+        field: String,
+    },
+
+    Extension {
+        /// Added/overwritten fields
+        extension: Box<Expression>,
+        /// Parent record
+        parent: Box<Expression>,
+    },
+
+    With {
+        record: Box<Expression>,
+        body: Box<Expression>,
+    },
 }
 
 impl Expression {
@@ -130,15 +162,33 @@ impl Expression {
     }
 
     fn func(param_name: impl ToString, param_type: Type, body: Expression) -> Self {
-        Expression::Func(param_name.to_string(), param_type, Box::new(body))
+        Expression::Func{
+            param_name: param_name.to_string(),
+            param_type,
+            body: Box::new(body)
+        }
     }
 
     fn call(func: Expression, param: Expression) -> Self {
-        Expression::Call(Box::new(func), Box::new(param))
+        Expression::Call{
+            func: Box::new(func),
+            param: Box::new(param)
+        }
     }
 
     fn let_expr(name: impl ToString, body: Expression, tail: Expression) -> Self {
-        Expression::Let(name.to_string(), Box::new(body), Box::new(tail))
+        Expression::Let{
+            name: name.to_string(),
+            body: Box::new(body),
+            tail: Box::new(tail)
+        }
+    }
+
+    fn rec_access(record: impl ToString, field: impl ToString) -> Self {
+        Expression::RecordAccess{
+            record: Box::new(Expression::Var(record.to_string())),
+            field: field.to_string()
+        }
     }
 
     /*
@@ -149,13 +199,27 @@ impl Expression {
         f y
      */
     /// returns an example program, equivalent to the one in the paper
-    fn example_progam() -> Self {
+    fn example_program() -> Self {
         Expression::let_expr("x", Expression::Boolean(false),
         Expression::let_expr("x", Expression::Literal(3),
         Expression::let_expr("y", Expression::Var("x".to_string()),
         Expression::let_expr("f", Expression::func("x", Type::Num,
             Expression::let_expr("z", Expression::var("x"), Expression::Boolean(false))), // x and z are unused
         Expression::call(Expression::var("f"), Expression::var("y"))
+        ))))
+    }
+
+    fn example_program_rec() -> Self {
+        let rec_expr = Expression::Record(vec![(String::from("x"), Expression::Literal(3)), (String::from("y"), Expression::Boolean(false))]);
+        let ext_rec = Expression::Record(vec![(String::from("z"), Expression::Literal(4)), (String::from("x"), Expression::Boolean(true))]);
+        Expression::let_expr("r", rec_expr,
+        Expression::let_expr("a", Expression::rec_access("r", "x"),
+        Expression::let_expr("q", Expression::Extension {
+            extension: Box::new(ext_rec),
+            parent: Box::new(Expression::var("r")),
+        },
+        Expression::let_expr("b", Expression::rec_access("q", "x"),
+        Expression::var("a")
         ))))
     }
 
@@ -193,7 +257,7 @@ impl Expression {
                     panic!("Addition of non-numbers")
                 }
             },
-            Expression::Func(param_name, param_type, body) => {
+            Expression::Func{param_name, param_type, body} => {
                 // add new scope for the function
                 let new_scope = sg.add_scope(Data::ScopeNum(SCOPE_NUM.fetch_add(1, Ordering::Relaxed)));
                 sg.add_edge(new_scope, Label::Parent, prev_scope).unwrap();
@@ -206,7 +270,7 @@ impl Expression {
                 let body_type = body.expr_type(sg, new_scope);
                 Type::fun(param_type.clone(), body_type)
             },
-            Expression::Call(func, param) => {
+            Expression::Call{func, param} => {
                 let func_type = func.expr_type(sg, prev_scope);
 
                 let (t1, t2) = match func_type {
@@ -220,7 +284,7 @@ impl Expression {
                 }
                 *t2
             },
-            Expression::Let(name, body, tail) => {
+            Expression::Let{name, body, tail} => {
                 // add new scope for the current "line"
                 let new_scope = sg.add_scope(Data::ScopeNum(SCOPE_NUM.fetch_add(1, Ordering::Relaxed)));
                 // let new_scope = sg.add_scope_default();
@@ -233,6 +297,61 @@ impl Expression {
                 // construct scopes for body and tail using new_scope
                 tail.expr_type(sg, new_scope)
             },
+            Expression::Record(fields) => {
+                // create a scope n that declares the record parameters
+                let record_scope = sg.add_scope(Data::RecScope(SCOPE_NUM.fetch_add(1, Ordering::Relaxed)));
+
+                // declare fields
+                for (name, expr) in fields {
+                    let field_type = expr.expr_type(sg, prev_scope);
+                    let field_data = Data::Variable(name.to_string(), field_type);
+                    sg.add_decl(record_scope, Label::Declaration, field_data).unwrap();
+                }
+
+                Type::Record(record_scope.0)
+            },
+            Expression::RecordAccess { record, field } => {
+                let record_type = record.expr_type(sg, prev_scope);
+                let Type::Record(scope_num) = record_type else {
+                    panic!("RecordAccess on non-record")
+                };
+
+                // query scope_num for field
+                let query = sg.query()
+                .with_path_wellformedness(query_regex!(Label: (Record|Extension)*Declaration)) // follow R or E edge until declaration
+                .with_label_order(label_order!(Label: Record < Extension, Declaration < Record, Declaration < Extension)) // R < E, $ < R, $ < E
+                .with_data_wellformedness(|data: &Data| -> bool {
+                    matches!(data, Data::Variable(d_name, _) if d_name == field)
+                })
+                .resolve(Scope(scope_num));
+                query
+                    .get_only_item().expect("Field not found")
+                    .data()
+                    .datatype()
+                    .expect("Data has no type")
+                    .clone()
+            },
+            Expression::Extension { extension, parent: original } => {
+                let ext_scope = sg.add_scope(Data::ScopeNum(SCOPE_NUM.fetch_add(1, Ordering::Relaxed)));
+                // extension must be record type
+                let ext_t = extension.expr_type(sg, prev_scope);
+                let Type::Record(ext_rec) = ext_t else {
+                    panic!("Extension type is not record")
+                };
+
+                // original must be record type
+                let orig_t = original.expr_type(sg, prev_scope);
+                let Type::Record(r) = orig_t else {
+                    panic!("Extending a non-record type")
+                };
+
+                // ext_scope -R> ext_rec
+                // ext_scope -E> r
+                sg.add_edge(ext_scope, Label::Record, Scope(ext_rec)).unwrap();
+                sg.add_edge(ext_scope, Label::Extension, Scope(r)).unwrap();
+                Type::Record(ext_scope.0)
+            },
+            Expression::With { record, body } => todo!(),
         }
     }
 }
@@ -245,7 +364,7 @@ fn main() {
     let storage = Storage::new();
     let sg = StlcGraph::new(&storage, ImplicitClose::default());
     let s0 = sg.add_scope(Data::ScopeNum(SCOPE_NUM.fetch_add(1, Ordering::Relaxed)));
-    Expression::example_progam().expr_type(&sg, s0);
+    Expression::example_program_rec().expr_type(&sg, s0);
 
     sg.render_to("output.mmd", RenderSettings::default()).unwrap();
 }
