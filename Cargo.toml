@@ -5,4 +5,5 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-scopegraphs = { version = "0.3.2", features = ["dot"] }
+# scopegraphs = { version = "0.3.2", features = ["dot"] }
+scopegraphs = { git= "https://github.com/metaborg/rust-scopegraphs", rev = "35b4e04485188c4f32864abb84e1d1e1768feae6"}
