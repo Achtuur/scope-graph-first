@@ -87,7 +87,6 @@ impl StlcType {
                             panic!("Record subtype query somehow returned non-variable");
                         };
                         let r = x_sub == x_super && t_sub.is_subtype_of(t_super, sg);
-                        println!("{x_sub}: {t_sub} == {x_super}: {t_super} ({r})");
                         r
                     })
                 });
