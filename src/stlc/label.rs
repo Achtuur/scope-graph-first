@@ -1,6 +1,5 @@
 use std::fmt::Display;
 
-
 #[derive(PartialEq, Eq, Hash, Debug, Clone, scopegraphs::Label, Copy)]
 pub enum StlcLabel {
     Parent,
@@ -8,7 +7,6 @@ pub enum StlcLabel {
     Record,
     Extension,
 }
-
 
 impl Display for StlcLabel {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -20,4 +18,3 @@ impl Display for StlcLabel {
         }
     }
 }
-

@@ -1,14 +1,8 @@
 mod stlc;
 
-use std::fmt::Display;
-use std::sync::atomic::{AtomicUsize, Ordering};
-
+use scopegraphs::render::{EdgeStyle, EdgeTo};
+use scopegraphs::{completeness::ImplicitClose, render::RenderSettings, Scope, Storage};
 use stlc::*;
-use scopegraphs::query_regex;
-use scopegraphs::render::{EdgeStyle, EdgeTo, RenderScopeData};
-use scopegraphs::{completeness::ImplicitClose, label_order, render::RenderSettings, Scope, ScopeGraph, Storage};
-use scopegraphs::resolve::Resolve;
-
 
 impl scopegraphs::render::RenderScopeLabel for StlcLabel {
     fn render(&self) -> String {
@@ -31,7 +25,11 @@ impl scopegraphs::render::RenderScopeData for StlcData {
     fn extra_edges(&self) -> Vec<scopegraphs::render::EdgeTo> {
         match self {
             StlcData::Variable(_, StlcType::Record(n)) => {
-                let e = EdgeTo {to: Scope(*n), edge_style: EdgeStyle{}, label_text: "(Rec)".to_string()};
+                let e = EdgeTo {
+                    to: Scope(*n),
+                    edge_style: EdgeStyle {},
+                    label_text: "(Rec)".to_string(),
+                };
                 vec![e]
             }
             _ => Vec::with_capacity(0),
@@ -49,9 +47,9 @@ fn main() {
     let s0 = sg.add_scope_default();
     Expression::example_program_subtyping().expr_type(&sg, s0);
 
-    sg.render_to("output.mmd", RenderSettings::default()).unwrap();
+    sg.render_to("output.mmd", RenderSettings::default())
+        .unwrap();
 }
-
 
 #[cfg(test)]
 mod tests {

@@ -1,11 +1,10 @@
 use std::fmt::Display;
 
-use scopegraphs::{label_order, query_regex, resolve::{Resolve, ResolvedPath}, Scope};
+use scopegraphs::{label_order, query_regex, resolve::Resolve, Scope};
 
 use crate::StlcLabel;
 
-use super::{Expression, StlcData, StlcGraph};
-
+use super::{StlcData, StlcGraph};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum SyntaxTypes {
@@ -24,7 +23,7 @@ impl SyntaxTypes {
                 let t1 = t1.to_stlc(sg, prev_scope);
                 let t2 = t2.to_stlc(sg, prev_scope);
                 StlcType::Fun(Box::new(t1), Box::new(t2))
-            },
+            }
             Self::Record(fields) => {
                 // create a scope n that declares the record parameters
                 let record_scope = sg.add_scope_default();
@@ -32,7 +31,8 @@ impl SyntaxTypes {
                 for (name, expr) in fields {
                     let field_type = expr.to_stlc(sg, prev_scope);
                     let field_data = StlcData::Variable(name.to_string(), field_type);
-                    sg.add_decl(record_scope, StlcLabel::Declaration, field_data).unwrap();
+                    sg.add_decl(record_scope, StlcLabel::Declaration, field_data)
+                        .unwrap();
                 }
                 StlcType::Record(record_scope.0)
             }
@@ -65,7 +65,7 @@ impl StlcType {
 
             (Self::Fun(t1, t2), Self::Fun(u1, u2)) => {
                 t1.is_subtype_of(u1, sg) && t2.is_subtype_of(u2, sg)
-            },
+            }
             (Self::Record(r1), Self::Record(r2)) => {
                 let query = sg.query()
                 .with_path_wellformedness(query_regex!(StlcLabel: (Record|Extension)*Declaration)) // follow R or E edge until declaration
@@ -92,9 +92,9 @@ impl StlcType {
                     })
                 });
                 is_subtype
-            },
+            }
             (t1, t2) if t1 != t2 => false,
-            _ => unimplemented!("Subtyping for {:?} and {:?}", self, other)
+            _ => unimplemented!("Subtyping for {:?} and {:?}", self, other),
         }
     }
 }
@@ -105,7 +105,7 @@ impl Display for StlcType {
             StlcType::Num => write!(f, "num"),
             StlcType::Bool => write!(f, "bool"),
             StlcType::Fun(param_type, return_type) => write!(f, "({param_type} -> {return_type})"),
-            StlcType::Record(n) => write!(f, "REC({n})")
+            StlcType::Record(n) => write!(f, "REC({n})"),
         }
     }
 }
